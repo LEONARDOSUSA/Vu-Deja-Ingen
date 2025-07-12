@@ -1,86 +1,103 @@
 from ib_insync import IB, Option, util
 from datetime import datetime, timedelta
 
-ib = IB()
-ib.connect('127.0.0.1', 7497, clientId=1)  # Gateway activo y TWS abierto
+# 🔌 Conexión a IBKR
+def conectar_ibkr(client_id=1):
+    ib = IB()
+    ib.connect('127.0.0.1', 7497, clientId=client_id)
+    return ib
 
+# 📅 Vencimiento dinámico
 def get_expiration(ticker):
     today = datetime.now()
-    if ticker == "SPY":
-        return today.strftime('%Y-%m-%d')  # Vence hoy (0DTE)
+    if ticker.upper() == "SPY":
+        return today.strftime('%Y-%m-%d')  # 0DTE
     else:
-        offset = (4 - today.weekday()) % 7  # 4 = viernes
+        offset = (4 - today.weekday()) % 7
         next_friday = today + timedelta(days=offset)
         return next_friday.strftime('%Y-%m-%d')
 
-def buscar_opcion_ibkr(signal_data):
-    ticker = signal_data["ticker"]
+# 🔍 Buscar contratos en vivo
+def obtener_contratos_ibkr(signal_data, client_id=1):
+    ticker = signal_data["ticker"].upper()
     direccion = signal_data["direccion"].upper()
     precio_referencia = signal_data["precio"]
     vencimiento = get_expiration(ticker)
 
-    print(f"🔍 Buscando contrato óptimo: {ticker} | Dirección: {direccion} | Vencimiento: {vencimiento}")
+    ib = conectar_ibkr(client_id)
+    print(f"🧠 Escaneando opciones: {ticker} | Dirección: {direccion} | Vencimiento: {vencimiento}")
 
     contratos_validos = []
-    descartados = []
 
-    strikes_referencia = [round(precio_referencia * x) for x in [0.95, 1.00, 1.05]]  # Rango táctico
+    # 🧮 Strikes tácticos: ±5% del spot
+    strikes_referencia = [round(precio_referencia * x) for x in [0.95, 1.00, 1.05]]
 
     for strike in strikes_referencia:
         opcion = Option(ticker, vencimiento, strike, direccion.lower(), 'SMART')
         ib.qualifyContracts(opcion)
         market_data = ib.reqMktData(opcion, '', False, False)
 
-        ib.sleep(1.2)  # Esperar datos
+        ib.sleep(1.5)  # Esperar respuesta
 
         bid = market_data.bid
         ask = market_data.ask
         last = market_data.last
-        price = last if last else (bid + ask) / 2 if bid and ask else None
+        price = last or (bid + ask) / 2 if bid and ask else None
         spread = ask - bid if bid and ask else None
         volume = market_data.volume
         iv = market_data.impliedVolatility
-        delta = getattr(market_data, 'modelGreeks', None).delta if market_data.modelGreeks else None
+        delta = market_data.modelGreeks.delta if market_data.modelGreeks else None
 
-        # Verificar condiciones
-        razones = []
-        if price is None or not (0.80 <= price <= 1.50):
-            razones.append("❌ Precio fuera de rango")
-        if spread is None or spread > 0.40:
-            razones.append("❌ Spread alto")
-        if volume is None or volume < 350:
-            razones.append("❌ Volumen insuficiente")
-        if iv is None or iv > 0.60:
-            razones.append("❌ IV elevada")
-        if delta is None or abs(delta) < 0.18 * strike:
-            razones.append("❌ Delta bajo")
+        contrato = {
+            "symbol": f"{ticker} {vencimiento} {direccion} {strike}",
+            "strike": strike,
+            "expiration": vencimiento,
+            "tipo": direccion,
+            "delta": round(delta, 3) if delta else None,
+            "precio": round(price, 2) if price else None,
+            "volume": volume,
+            "iv": round(iv * 100, 2) if iv else None,
+            "spread": round(spread, 2) if spread else None
+        }
 
-        if not razones:
-            contratos_validos.append({
-                "symbol": f"{ticker} {vencimiento} {direccion} {strike}",
-                "strike": strike,
-                "expiration": vencimiento,
-                "tipo": direccion,
-                "delta": round(delta, 3),
-                "precio": round(price, 2),
-                "volume": volume,
-                "iv": round(iv * 100, 2),
-                "spread": round(spread, 2)
-            })
-        else:
-            descartados.append({"strike": strike, "razones": razones})
+        # 🛡️ Validación técnica
+        if (
+            contrato["precio"] and 0.8 <= contrato["precio"] <= 2.0 and
+            contrato["spread"] and contrato["spread"] <= 0.25 and
+            contrato["volume"] and contrato["volume"] > 200 and
+            contrato["iv"] and 35 <= contrato["iv"] <= 60 and
+            contrato["delta"] and abs(contrato["delta"]) >= 0.2
+        ):
+            contratos_validos.append(contrato)
 
         ib.cancelMktData(market_data)
 
     ib.disconnect()
 
-    if contratos_validos:
-        contrato_optimo = max(contratos_validos, key=lambda c: c["volume"] / (c["spread"] + 0.01))
-        print(f"✅ Contrato óptimo encontrado: {contrato_optimo}")
-        return contrato_optimo
-    else:
-        print("❌ No se encontró contrato con filtros tácticos")
-        print("📋 Contratos descartados:")
-        for d in descartados:
-            print(f"Strike {d['strike']}: {', '.join(d['razones'])}")
-        return None
+    # 🧠 Ordenar por calidad táctica
+    def score(c):
+        return c["delta"] + (c["volume"] * 0.0001) - c["spread"]
+
+    return sorted(contratos_validos, key=score, reverse=True)
+
+# 👤 Asignar contrato por cliente_id
+def asignar_contrato_ibkr(signal_data, cliente_id, precio_spot):
+    signal_data["precio"] = precio_spot
+    contratos = obtener_contratos_ibkr(signal_data, client_id=cliente_id)
+    if not contratos:
+        return {"error": "❌ No hay contratos válidos con IBKR para esta señal."}
+    index = cliente_id % len(contratos)
+    return contratos[index]
+
+# 🧪 Test local
+if __name__ == "__main__":
+    señal = {"ticker": "SPY", "direccion": "CALL"}
+    spot_price = 547.21
+
+    contratos = obtener_contratos_ibkr({"ticker": señal["ticker"], "direccion": señal["direccion"], "precio": spot_price})
+
+    for idx, contrato in enumerate(contratos, start=1):
+        print(f"\n⚡ Contrato #{idx}: {contrato['symbol']}")
+        print(f"📅 Vencimiento: {contrato['expiration']} | Strike: {contrato['strike']}")
+        print(f"📊 Delta: {contrato['delta']} | IV: {contrato['iv']} | Volumen: {contrato['volume']}")
+        print(f"💸 Spread: {contrato['spread']} | Precio: {contrato['precio']}")
