@@ -78,6 +78,7 @@ def confirmar_macd(ticker, momento, direccion):
         except Exception as e:
             print(f"· {tf}: ⚠️ Error técnico → {e}")
     return confirmados >= 2
+
 # 🔁 Loop principal institucional por nivel
 def run():
     fecha_hoy = datetime.now(NY_TZ).date()
@@ -137,8 +138,9 @@ def run():
                     continue
 
                 print(f"\n📊 {ticker} ➝ Patrón {direccion} detectado — {momento.strftime('%H:%M')}", flush=True)
-                    if confirmar_macd(ticker, momento, direccion):
-                        try:
+
+                if confirmar_macd(ticker, momento, direccion):
+                    try:
                         precio = round(c2, 2)
                         hora = momento.strftime("%H:%M")
                         mensaje = (
@@ -156,7 +158,7 @@ def run():
                         )
                         enviar_mensaje(mensaje)
 
-                        # 💼 Integración Vu Deja Contracts™ — selector de opciones
+                        # 💼 Selector de opciones táctico desde IBKR
                         señal = {"ticker": ticker, "direccion": direccion}
                         contratos = obtener_contratos_ibkr(señal)
 
@@ -174,7 +176,7 @@ def run():
                         activos_vivos.remove(ticker)
                         print(f"✅ Señal enviada para {ticker}\n", flush=True)
 
-                    except Exception as e:
+                                        except Exception as e:
                         print(f"⚠️ Error al enviar mensaje para {ticker}: {e}", flush=True)
                 else:
                     print("· Señal descartada — MACD insuficiente\n", flush=True)
