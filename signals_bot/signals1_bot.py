@@ -137,8 +137,8 @@ def run():
                     continue
 
                 print(f"\n📊 {ticker} ➝ Patrón {direccion} detectado — {momento.strftime('%H:%M')}", flush=True)
-                                if confirmar_macd(ticker, momento, direccion):
-                    try:
+                    if confirmar_macd(ticker, momento, direccion):
+                        try:
                         precio = round(c2, 2)
                         hora = momento.strftime("%H:%M")
                         mensaje = (
