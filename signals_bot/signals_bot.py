@@ -4,7 +4,7 @@ import ta
 import requests
 import alpaca_trade_api as tradeapi
 from datetime import datetime, timedelta
-
+from options_selector.options_selector_ibkr import obtener_contratos_ibkr
 # 🔐 Cargar entorno desde .env
 ALPACA_KEY = os.getenv("ALPACA_KEY")
 ALPACA_SECRET = os.getenv("ALPACA_SECRET")
@@ -160,7 +160,7 @@ def evaluar_ticker(ticker, fecha, momento):
 🧭 *Oportunidad táctica intradía confirmada*{diagnostico_calidad}
 """
         enviar_mensaje(mensaje)
-        from options_selector.options_selector_ibkr import obtener_contratos_ibkr
+        
 
 # Construir señal estándar para el selector
         señal = {
