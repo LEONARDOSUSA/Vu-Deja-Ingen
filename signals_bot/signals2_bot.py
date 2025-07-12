@@ -6,6 +6,7 @@ import requests
 import alpaca_trade_api as tradeapi
 from datetime import datetime, timedelta
 import pandas as pd
+from options_selector.options_selector_ibkr import obtener_contratos_ibkr  # 💡 Ya integrado
 
 # 🔐 Cargar entorno y claves
 load_dotenv()
@@ -33,7 +34,6 @@ def enviar_mensaje(mensaje):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {"chat_id": TELEGRAM_CHAT_ID, "text": mensaje, "parse_mode": "Markdown"}
     requests.post(url, data=data)
-
 def obtener_df(tf, ticker, momento_final):
     cierre = momento_final - timedelta(minutes=1 if tf == "1Min" else 5 if tf == "5Min" else 15)
     inicio = cierre - timedelta(minutes=600)
