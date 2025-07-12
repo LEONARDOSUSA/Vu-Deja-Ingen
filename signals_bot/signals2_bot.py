@@ -39,20 +39,23 @@ def obtener_df(tf, ticker, momento_final):
     inicio = cierre - timedelta(minutes=600)
     df = api.get_bars(ticker, tf, start=inicio.isoformat(), end=cierre.isoformat()).df
     return df.tz_convert("America/New_York").dropna()
+
 def diagnostico_macd(ticker, momento, direccion):
     marcos = ["1Min", "5Min", "15Min"]
     confirmados = 0
     for tf in marcos:
         try:
             df = obtener_df(tf, ticker, momento)
+            if df.empty or len(df) < 35:
+                print(f"📊 MACD {tf} ➝ ❌ Datos insuficientes")
+                continue
             macd = ta.trend.MACD(df["close"])
             m1 = macd.macd().iloc[-1]
             s1 = macd.macd_signal().iloc[-1]
-            if pd.isna(m1) or pd.isna(s1):
-                print(f"📊 MACD {tf} ➝ ⚠️ datos incompletos")
-                continue
-            print(f"📊 MACD {tf} ➝ MACD={round(m1,4)}, Signal={round(s1,4)} ➝ {'✅ alineado' if (direccion == 'CALL' and m1 > s1) or (direccion == 'PUT' and m1 < s1) else '❌ no alineado'}")
-            if (direccion == "CALL" and m1 > s1) or (direccion == "PUT" and m1 < s1):
+            alineado = (m1 > s1) if direccion == "CALL" else (m1 < s1)
+            estado = "✅ alineado" if alineado else "❌ no alineado"
+            print(f"📊 MACD {tf} ➝ MACD={round(m1,4)}, Signal={round(s1,4)} ➝ {estado}")
+            if alineado:
                 confirmados += 1
         except Exception as e:
             print(f"📊 MACD {tf} ➝ ⚠️ error: {e}")
@@ -60,6 +63,9 @@ def diagnostico_macd(ticker, momento, direccion):
 
 def validar_sma(df, direccion, marco):
     try:
+        if df.empty or len(df) < 30:
+            print(f"📏 SMA {marco} ➝ ❌ Datos insuficientes")
+            return False
         sma20 = ta.trend.sma_indicator(df["close"], window=20)
         sma30 = ta.trend.sma_indicator(df["close"], window=30)
         p = df["close"].iloc[-1]
@@ -68,20 +74,16 @@ def validar_sma(df, direccion, marco):
         if pd.isna(s20) or pd.isna(s30):
             print(f"📏 SMA {marco} ➝ ⚠️ SMA incompleta ➝ marco omitido")
             return False
-        print(f"📏 SMA {marco} ➝ Precio={round(p,2)}, SMA20={round(s20,2)}, SMA30={round(s30,2)} ➝ ", end="")
-        if direccion == "CALL" and p > s20 and p > s30 and s20 > s30:
-            print("✅ alineadas")
-            return True
-        elif direccion == "PUT" and p < s20 and p < s30 and s20 < s30:
-            print("✅ alineadas")
-            return True
-        else:
-            print("❌ no alineadas")
-            return False
+        alineadas = (
+            p > s20 and p > s30 and s20 > s30 if direccion == "CALL"
+            else p < s20 and p < s30 and s20 < s30
+        )
+        estado = "✅ alineadas" if alineadas else "❌ no alineadas"
+        print(f"📏 SMA {marco} ➝ Precio={round(p,2)}, SMA20={round(s20,2)}, SMA30={round(s30,2)} ➝ {estado}")
+        return alineadas
     except Exception as e:
         print(f"📏 SMA {marco} ➝ ⚠️ error: {e}")
         return False
-
 def detectar_direccion_ruptura(ticker, fecha, hora_a, hora_b):
     ini_a = NY_TZ.localize(datetime.combine(fecha, datetime.strptime(hora_a, "%H:%M").time()))
     fin_a = ini_a + timedelta(minutes=15)
@@ -109,6 +111,7 @@ def detectar_direccion_ruptura(ticker, fecha, hora_a, hora_b):
     else:
         print("⛔ Ruptura aún no confirmada")
         return None
+
 def validar_secuencia_dos_velas(ticker, fecha, horas, direccion):
     cuerpo_validas = 0
     for hora in horas:
@@ -150,7 +153,6 @@ def evaluar_calidad_senal(ticker, momento, direccion):
         return puntaje
     except Exception:
         return 0.0
-
 def evaluar_senal_institucional(ticker, fecha, hora_a, hora_b, momento):
     direccion = detectar_direccion_ruptura(ticker, fecha, hora_a, hora_b)
     if not direccion:
@@ -194,13 +196,29 @@ def evaluar_senal_institucional(ticker, fecha, hora_a, hora_b, momento):
 ⚖️ *Puntaje técnico:* `{puntaje_tecnico}`
 """
         enviar_mensaje(mensaje)
-        print("📨 Señal enviada por Telegram\n")
+
+        # 📡 Enviar mensaje con contratos sugeridos por IBKR
+        señal = {"ticker": ticker, "direccion": direccion}
+        contratos = obtener_contratos_ibkr(señal)
+
+        mensaje_selector = f"\n🎯 *Contratos sugeridos para `{ticker}` ({direccion})*\n"
+        for idx, c in enumerate(contratos[:3], start=1):
+            mensaje_selector += f"\n━━━━━━━━━━━━━━━━\n⚡ *Opción #{idx}:* `{c['symbol']}`"
+            mensaje_selector += f"\n📅 Vencimiento: `{c['expiration']}` | Strike: `{c['strike']}`"
+            mensaje_selector += f"\n📊 Delta: `{c['delta']}` | IV: `{c['iv']}` | Volumen: `{c['volume']}`"
+            mensaje_selector += f"\n💸 Spread: `{c['spread']}` | Precio: `${c['precio']}`"
+
+        mensaje_selector += "\n\n🔐 *Diagnóstico institucional vía Vu Deja Contracts™*"
+        enviar_mensaje(mensaje_selector)
+
+        print("📨 Señal y contratos enviados por Telegram\n")
         return True
     elif macd_total >= 2:
         print("🟡 Señal semi institucional detectada (MACD confirmado, SMA parcial)\n")
     else:
         print("⛔ Condiciones incompletas ➝ sin señal\n")
     return False
+
 # 🎬 Ciclo principal de ruptura progresiva
 if __name__ == "__main__":
     ahora = datetime.now(NY_TZ)
@@ -231,4 +249,5 @@ if __name__ == "__main__":
                 break
         if not señal_emitida:
             print(f"📉 No se emitió señal para {ticker}\n")
+
     print("🏁 Diagnóstico finalizado\n")
