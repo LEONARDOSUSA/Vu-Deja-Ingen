@@ -6,6 +6,7 @@ from validadores import verificar_claves_y_datos
 import alpaca_trade_api as tradeapi
 import pytz
 import ta
+from options_selector.options_selector_ibkr import obtener_contratos_ibkr  # ✅ Integrado
 
 # 🔐 Configuración
 ALPACA_KEY = os.getenv("ALPACA_KEY")
@@ -23,7 +24,7 @@ def enviar_mensaje(mensaje):
     data = {"chat_id": TELEGRAM_CHAT_ID, "text": mensaje, "parse_mode": "Markdown"}
     requests.post(url, data=data)
 
-# 🧱 Nivel + dirección institucional
+# 🧱 Nivel + dirección institucional por vela 15Min
 def obtener_nivel_15m(ticker, fecha_base):
     inicio = datetime.combine(fecha_base, datetime.strptime("09:30", "%H:%M").time())
     fin = inicio + timedelta(minutes=15)
@@ -48,7 +49,7 @@ def obtener_nivel_15m(ticker, fecha_base):
     print(f"· {ticker} ➝ Nivel 15Min: {round(close, 2)}, Dirección institucional: {direccion}")
     return round(close, 2), direccion
 
-# 📊 Confirmación técnica MACD
+# 📊 Confirmación técnica MACD multitimeframe
 def confirmar_macd(ticker, momento, direccion):
     timeframes = ["1Min", "5Min", "15Min"]
     confirmados = 0
@@ -77,17 +78,18 @@ def confirmar_macd(ticker, momento, direccion):
         except Exception as e:
             print(f"· {tf}: ⚠️ Error técnico → {e}")
     return confirmados >= 2
-
-# 🔁 Loop principal
+# 🔁 Loop principal institucional por nivel
 def run():
     fecha_hoy = datetime.now(NY_TZ).date()
     niveles = {}
     direcciones_inst = {}
     enviados = set()
     print(f"📍 Esperando cierre de vela 15Min...", flush=True)
+
     while datetime.now(NY_TZ).time() < datetime.strptime("09:46", "%H:%M").time():
         time.sleep(10)
 
+    # Cargar niveles institucionales para todos los tickers
     for ticker in tickers_activos:
         nivel, direccion_inst = obtener_nivel_15m(ticker, fecha_hoy)
         if nivel is not None and direccion_inst is not None:
@@ -108,6 +110,7 @@ def run():
                 inicio = NY_TZ.localize(inicio.replace(tzinfo=None))
                 df = api.get_bars(ticker, "1Min", start=inicio.isoformat(), end=fin.isoformat()).df
                 df = df.tz_convert("America/New_York")
+
                 if len(df) < 3:
                     print(f"· {ticker} ➝ Datos insuficientes en 1Min — {len(df)} velas")
                     continue
@@ -115,8 +118,13 @@ def run():
                 c1 = df["close"].iloc[-3]
                 c2 = df["close"].iloc[-2]
                 momento = df.index[-2].to_pydatetime()
-                nivel = niveles[ticker]
+
+                # 🧠 Recuperar nivel y dirección
+                nivel = niveles.get(ticker)
                 direccion_inst = direcciones_inst.get(ticker)
+                if nivel is None or direccion_inst is None:
+                    print(f"⚠️ {ticker} ➝ sin nivel o dirección institucional cargada")
+                    continue
 
                 print(f"· {ticker} ➝ Dirección: {direccion_inst}, Nivel: {nivel}, Cierres: {c1}, {c2}")
 
@@ -129,7 +137,7 @@ def run():
                     continue
 
                 print(f"\n📊 {ticker} ➝ Patrón {direccion} detectado — {momento.strftime('%H:%M')}", flush=True)
-                if confirmar_macd(ticker, momento, direccion):
+                                if confirmar_macd(ticker, momento, direccion):
                     try:
                         precio = round(c2, 2)
                         hora = momento.strftime("%H:%M")
@@ -147,9 +155,25 @@ def run():
                             f"🧭 *Oportunidad táctica intradía confirmada*"
                         )
                         enviar_mensaje(mensaje)
+
+                        # 💼 Integración Vu Deja Contracts™ — selector de opciones
+                        señal = {"ticker": ticker, "direccion": direccion}
+                        contratos = obtener_contratos_ibkr(señal)
+
+                        mensaje_selector = f"\n🎯 *Contratos sugeridos para `{ticker}` ({direccion})*\n"
+                        for idx, c in enumerate(contratos[:3], start=1):
+                            mensaje_selector += f"\n━━━━━━━━━━━━━━━━\n⚡ *Opción #{idx}:* `{c['symbol']}`"
+                            mensaje_selector += f"\n📅 Vencimiento: `{c['expiration']}` | Strike: `{c['strike']}`"
+                            mensaje_selector += f"\n📊 Delta: `{c['delta']}` | IV: `{c['iv']}` | Volumen: `{c['volume']}`"
+                            mensaje_selector += f"\n💸 Spread: `{c['spread']}` | Precio: `${c['precio']}`"
+
+                        mensaje_selector += "\n\n🔐 *Diagnóstico institucional vía Vu Deja Contracts™*"
+                        enviar_mensaje(mensaje_selector)
+
                         enviados.add(ticker)
                         activos_vivos.remove(ticker)
                         print(f"✅ Señal enviada para {ticker}\n", flush=True)
+
                     except Exception as e:
                         print(f"⚠️ Error al enviar mensaje para {ticker}: {e}", flush=True)
                 else:
