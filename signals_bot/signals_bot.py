@@ -160,6 +160,29 @@ def evaluar_ticker(ticker, fecha, momento):
 🧭 *Oportunidad táctica intradía confirmada*{diagnostico_calidad}
 """
         enviar_mensaje(mensaje)
+        from options_selector.options_selector_ibkr import obtener_contratos_ibkr
+
+# Construir señal estándar para el selector
+        señal = {
+            "ticker": ticker,
+            "direccion": direccion
+        }
+
+# Ejecutar evaluación institucional de opciones
+        contratos = obtener_contratos_ibkr(señal)
+
+# Formatear mensaje adicional con contratos tácticos válidos
+        mensaje_selector = f"\n🎯 *Contratos sugeridos para `{ticker}` ({direccion})*\n"
+        for idx, c in enumerate(contratos[:3], start=1):
+            mensaje_selector += f"\n━━━━━━━━━━━━━━━━\n⚡ *Opción #{idx}:* `{c['symbol']}`"
+            mensaje_selector += f"\n📅 Vencimiento: `{c['expiration']}` | Strike: `{c['strike']}`"
+            mensaje_selector += f"\n📊 Delta: `{c['delta']}` | IV: `{c['iv']}` | Volumen: `{c['volume']}`"
+            mensaje_selector += f"\n💸 Spread: `{c['spread']}` | Precio: `${c['precio']}`"
+
+        mensaje_selector += "\n\n🔐 *Diagnóstico institucional vía Vu Deja Contracts™*"
+
+# Enviar mensaje Telegram con resultados del selector
+        enviar_mensaje(mensaje_selector)
         ya_enviados.add(ticker)
         senal_detectada = True
         print("📨 Señal enviada por Telegram\n")
