@@ -9,7 +9,7 @@ def conectar_ibkr(client_id=1):
 
 # 📦 Consultar precio spot en tiempo real
 def obtener_precio_spot_ibkr(ticker):
-    ib = conectar_ibkr(client_id=999)  # clientId exclusivo para spot
+    ib = conectar_ibkr(client_id=999)
     contrato = Stock(ticker.upper(), 'SMART', 'USD')
     ib.qualifyContracts(contrato)
     md = ib.reqMktData(contrato, '', False, False)
@@ -23,13 +23,12 @@ def obtener_precio_spot_ibkr(ticker):
 def get_expiration(ticker):
     today = datetime.now()
     if ticker.upper() == "SPY":
-        return today.strftime('%Y-%m-%d')  # Vencimiento diario
-    else:
-        offset = (4 - today.weekday()) % 7
-        next_friday = today + timedelta(days=offset)
-        return next_friday.strftime('%Y-%m-%d')
+        return today.strftime('%Y-%m-%d')
+    offset = (4 - today.weekday()) % 7
+    next_friday = today + timedelta(days=offset)
+    return next_friday.strftime('%Y-%m-%d')
 
-# 🧠 Escanear contratos reales
+# 🧠 Escanear contratos y clasificarlos por nivel
 def obtener_contratos_ibkr(signal_data, client_id=1):
     ticker = signal_data["ticker"].upper()
     direccion = signal_data["direccion"].upper()
@@ -85,23 +84,37 @@ def obtener_contratos_ibkr(signal_data, client_id=1):
     def score(c):
         return c["delta"] + (c["volume"] * 0.0001) - c["spread"]
 
-    return sorted(contratos_validos, key=score, reverse=True)
+    contratos_ordenados = sorted(contratos_validos, key=score, reverse=True)
+    return contratos_ordenados
 
-# 👤 Asignar contrato institucional por cliente
-def asignar_contrato_ibkr(signal_data, cliente_id):
-    contratos = obtener_contratos_ibkr(signal_data, client_id=cliente_id)
-    if not contratos:
-        return {"error": "❌ No hay contratos válidos para esta señal con IBKR."}
-    index = cliente_id % len(contratos)
-    return contratos[index]
+# 📦 Clasificar contratos por nivel institucional
+def clasificar_contratos_por_nivel(contratos):
+    niveles = {"basico": [], "intermedio": [], "premium": []}
+    for c in contratos:
+        p = c["precio"]
+        if p <= 1.20:
+            niveles["basico"].append(c)
+        elif 1.20 < p <= 1.70:
+            niveles["intermedio"].append(c)
+        else:
+            niveles["premium"].append(c)
+    return niveles
 
-# 🧪 Test local institucional
+# 🧾 Formateador de mensaje institucional por contrato
+def formato_mensaje_contrato(contrato, nivel):
+    return (
+        f"[{nivel.upper()}] {contrato['symbol']}\n"
+        f"💸 Precio: ${contrato['precio']} | Δ: {contrato['delta']} | IV: {contrato['iv']}%\n"
+        f"📊 Volumen: {contrato['volume']} | Spread: {contrato['spread']}"
+    )
+
+# 🧪 Test institucional
 if __name__ == "__main__":
     señal = {"ticker": "SPY", "direccion": "CALL"}
     contratos = obtener_contratos_ibkr(señal)
+    grupos = clasificar_contratos_por_nivel(contratos)
 
-    for idx, contrato in enumerate(contratos, start=1):
-        print(f"\n⚡ Contrato #{idx}: {contrato['symbol']}")
-        print(f"📅 Vencimiento: {contrato['expiration']} | Strike: {contrato['strike']}")
-        print(f"📊 Delta: {contrato['delta']} | IV: {contrato['iv']} | Volumen: {contrato['volume']}")
-        print(f"💸 Spread: {contrato['spread']} | Precio: {contrato['precio']}")
+    for nivel in ["basico", "intermedio", "premium"]:
+        print(f"\n🔐 Contratos {nivel.upper()}:\n")
+        for contrato in grupos[nivel]:
+            print(formato_mensaje_contrato(contrato, nivel))
